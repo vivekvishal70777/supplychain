@@ -1,0 +1,4 @@
+[
+  { "warehouseId": "WH-CHI", "name": "Chicago DC", "region": "US-CENTRAL", "active": true },
+  { "warehouseId": "WH-LAX", "name": "Los Angeles DC", "region": "US-WEST", "active": true }
+]

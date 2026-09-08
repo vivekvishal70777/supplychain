@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd">
+
+  <configuration-properties file="config/config-${mule.env}.yaml"/>
+  <configuration defaultErrorHandler-ref="global-error-handler" defaultResponseTimeout="30000"/>
+
+  <http:listener-config name="http-listener-config">
+    <http:listener-connection host="${http.host}" port="${http.port}"/>
+  </http:listener-config>
+
+  <http:request-config name="erp-httpreq" responseTimeout="${sys.erp.responseTimeout}">
+    <http:request-connection host="${sys.erp.host}" port="${sys.erp.port}"/>
+  </http:request-config>
+  <http:request-config name="wms-httpreq" responseTimeout="${sys.wms.responseTimeout}">
+    <http:request-connection host="${sys.wms.host}" port="${sys.wms.port}"/>
+  </http:request-config>
+  <http:request-config name="tms-httpreq" responseTimeout="${sys.tms.responseTimeout}">
+    <http:request-connection host="${sys.tms.host}" port="${sys.tms.port}"/>
+  </http:request-config>
+
+  <os:config name="os-config"/>
+  <os:object-store name="fulfillment-store"
+                   persistent="${objectstore.persistent}"
+                   maxEntries="${objectstore.maxEntries}"
+                   entryTtl="${objectstore.entryTtlHours}"
+                   entryTtlUnit="HOURS"
+                   config-ref="os-config"/>
+  <os:object-store name="idempotency-store"
+                   persistent="${objectstore.persistent}"
+                   maxEntries="50000"
+                   entryTtl="24"
+                   entryTtlUnit="HOURS"
+                   config-ref="os-config"/>
+  <os:object-store name="circuit-store"
+                   persistent="false"
+                   maxEntries="100"
+                   entryTtl="5"
+                   entryTtlUnit="MINUTES"
+                   config-ref="os-config"/>
+
+  <apikit:config name="sc-prc-fulfillment-api-config"
+                 api="api/sc-prc-fulfillment-api.raml"
+                 outboundHeadersMapName="outboundHeaders"
+                 httpStatusVarName="httpStatus"
+                 consoleEnabled="${apikit.consoleEnabled}"/>
+</mule>

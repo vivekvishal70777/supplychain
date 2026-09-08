@@ -1,0 +1,38 @@
+[
+  {
+    "sku": "SKU-WIDGET-A",
+    "warehouseId": "WH-CHI",
+    "onHand": 420,
+    "allocated": 20,
+    "available": 400,
+    "safetyStock": 50,
+    "lastCountAt": "2026-09-01T08:00:00Z"
+  },
+  {
+    "sku": "SKU-WIDGET-A",
+    "warehouseId": "WH-LAX",
+    "onHand": 80,
+    "allocated": 10,
+    "available": 70,
+    "safetyStock": 40,
+    "lastCountAt": "2026-09-01T08:00:00Z"
+  },
+  {
+    "sku": "SKU-WIDGET-B",
+    "warehouseId": "WH-CHI",
+    "onHand": 15,
+    "allocated": 5,
+    "available": 10,
+    "safetyStock": 25,
+    "lastCountAt": "2026-09-01T08:00:00Z"
+  },
+  {
+    "sku": "SKU-BATTERY-X",
+    "warehouseId": "WH-CHI",
+    "onHand": 200,
+    "allocated": 0,
+    "available": 200,
+    "safetyStock": 30,
+    "lastCountAt": "2026-09-01T08:00:00Z"
+  }
+]

@@ -1,0 +1,35 @@
+http:
+  host: "0.0.0.0"
+  port: "8081"
+  basePath: "/api"
+app:
+  name: "sc-prc-fulfillment-api"
+  env: "prod"
+apikit:
+  consoleEnabled: false
+objectstore:
+  persistent: true
+  maxEntries: "200000"
+  entryTtlHours: "168"
+sys:
+  erp:
+    host: "sc-sys-erp-api.prod.internal"
+    port: "8081"
+    basePath: "/api"
+    responseTimeout: "5000"
+  wms:
+    host: "sc-sys-wms-api.prod.internal"
+    port: "8081"
+    basePath: "/api"
+    responseTimeout: "5000"
+  tms:
+    host: "sc-sys-tms-api.prod.internal"
+    port: "8081"
+    basePath: "/api"
+    responseTimeout: "5000"
+retry:
+  maxRetries: "3"
+  millisBetween: "400"
+circuit:
+  failureThreshold: "3"
+  openMs: "60000"

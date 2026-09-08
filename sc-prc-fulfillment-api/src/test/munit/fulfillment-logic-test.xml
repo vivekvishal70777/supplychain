@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+  <munit:config name="sc-prc-fulfillment-munit"/>
+
+  <munit:test name="creditOk-rejects-blocked-customer" description="Fulfillment DW helper rejects blocked accounts">
+    <munit:execution>
+      <ee:transform>
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::fulfillment
+output application/json
+---
+{
+  active: creditOk({ status: "ACTIVE", openPayables: { amount: 10 }, creditLimit: { amount: 100 } }),
+  blocked: creditOk({ status: "BLOCKED", openPayables: { amount: 0 }, creditLimit: { amount: 100 } }),
+  overLimit: creditOk({ status: "ACTIVE", openPayables: { amount: 100 }, creditLimit: { amount: 100 } }),
+  status: fulfillmentStatus(false, "ALLOCATED", true)
+}
+]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+    </munit:execution>
+    <munit:validation>
+      <munit-tools:assert-that expression="#[payload.active]" is="#[MunitTools::equalTo(true)]"/>
+      <munit-tools:assert-that expression="#[payload.blocked]" is="#[MunitTools::equalTo(false)]"/>
+      <munit-tools:assert-that expression="#[payload.overLimit]" is="#[MunitTools::equalTo(false)]"/>
+      <munit-tools:assert-that expression="#[payload.status]" is="#[MunitTools::equalTo('BOOKED')]"/>
+    </munit:validation>
+  </munit:test>
+</mule>

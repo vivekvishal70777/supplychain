@@ -1,0 +1,156 @@
+#%RAML 1.0
+title: GlobalMart SC System API — ERP
+version: v1
+baseUri: https://erp.sys.globalmart.internal/{version}
+mediaType: application/json
+protocols: [HTTPS]
+
+description: |
+  System API that canonicalizes ERP entities (customers, products, purchase orders).
+  Downstream in production is SAP S/4HANA or Oracle EBS via HTTP/OData; this
+  implementation uses Object Store so the platform can run locally.
+
+uses:
+  err: libraries/errors.raml
+  types: libraries/erp-types.raml
+
+traits:
+  correlation:
+    headers:
+      X-Correlation-Id:
+        type: string
+        required: false
+        description: End-to-end correlation id. Generated if omitted.
+  client-id:
+    headers:
+      client_id:
+        type: string
+        required: false
+        description: Enforced by API Manager Client ID Enforcement in non-local envs.
+
+/health:
+  get:
+    displayName: Liveness
+    description: Process is up. Used by load balancers.
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "UP", "app": "sc-sys-erp-api" }
+
+/ready:
+  get:
+    displayName: Readiness
+    description: Object Store and seed data are usable.
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "READY" }
+      503:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/customers/{customerId}:
+  uriParameters:
+    customerId:
+      type: string
+      minLength: 1
+  get:
+    is: [correlation, client-id]
+    displayName: Get customer
+    responses:
+      200:
+        body:
+          application/json:
+            type: types.Customer
+      404:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/products/{sku}:
+  uriParameters:
+    sku:
+      type: string
+  get:
+    is: [correlation, client-id]
+    displayName: Get product master
+    responses:
+      200:
+        body:
+          application/json:
+            type: types.Product
+      404:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/purchase-orders:
+  get:
+    is: [correlation, client-id]
+    queryParameters:
+      status:
+        type: string
+        required: false
+      customerId:
+        type: string
+        required: false
+    displayName: List purchase orders
+    responses:
+      200:
+        body:
+          application/json:
+            type: types.PurchaseOrder[]
+  post:
+    is: [correlation, client-id]
+    displayName: Create purchase order
+    headers:
+      X-Idempotency-Key:
+        type: string
+        required: true
+        description: Caller-supplied key; replays return the original order.
+    body:
+      application/json:
+        type: types.PurchaseOrderCreate
+    responses:
+      201:
+        body:
+          application/json:
+            type: types.PurchaseOrder
+      409:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/purchase-orders/{poId}:
+  uriParameters:
+    poId:
+      type: string
+  get:
+    is: [correlation, client-id]
+    responses:
+      200:
+        body:
+          application/json:
+            type: types.PurchaseOrder
+      404:
+        body:
+          application/json:
+            type: err.ErrorResponse
+  patch:
+    is: [correlation, client-id]
+    displayName: Update PO status (confirm, cancel)
+    body:
+      application/json:
+        type: types.PurchaseOrderPatch
+    responses:
+      200:
+        body:
+          application/json:
+            type: types.PurchaseOrder
+      409:
+        body:
+          application/json:
+            type: err.ErrorResponse

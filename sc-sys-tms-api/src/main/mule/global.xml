@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd">
+
+  <configuration-properties file="config/config-${mule.env}.yaml"/>
+  <configuration defaultErrorHandler-ref="global-error-handler" defaultResponseTimeout="30000"/>
+
+  <http:listener-config name="http-listener-config">
+    <http:listener-connection host="${http.host}" port="${http.port}"/>
+  </http:listener-config>
+
+  <os:config name="os-config"/>
+  <os:object-store name="tms-store"
+                   persistent="${objectstore.persistent}"
+                   maxEntries="${objectstore.maxEntries}"
+                   entryTtl="${objectstore.entryTtlHours}"
+                   entryTtlUnit="HOURS"
+                   config-ref="os-config"/>
+
+  <vm:config name="vm-config">
+    <vm:queues>
+      <vm:queue queueName="tracking-events" queueType="PERSISTENT"/>
+      <vm:queue queueName="tracking-events-dlq" queueType="PERSISTENT"/>
+    </vm:queues>
+  </vm:config>
+
+  <apikit:config name="sc-sys-tms-api-config"
+                 api="api/sc-sys-tms-api.raml"
+                 outboundHeadersMapName="outboundHeaders"
+                 httpStatusVarName="httpStatus"
+                 consoleEnabled="${apikit.consoleEnabled}"/>
+</mule>

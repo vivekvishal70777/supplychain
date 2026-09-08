@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+  <error-handler name="global-error-handler">
+    <on-error-propagate type="APP:NOT_FOUND">
+      <ee:transform>
+        <ee:variables>
+          <ee:set-variable variableName="httpStatus"><![CDATA[404]]></ee:set-variable>
+        </ee:variables>
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::errors
+output application/json
+---
+errorPayload(vars.correlationId default correlationId, 404, "APP:NOT_FOUND", error.description)
+]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+    </on-error-propagate>
+    <on-error-propagate type="APP:VALIDATION, APIKIT:BAD_REQUEST, APIKIT:NOT_FOUND, APIKIT:METHOD_NOT_ALLOWED">
+      <ee:transform>
+        <ee:variables>
+          <ee:set-variable variableName="httpStatus"><![CDATA[400]]></ee:set-variable>
+        </ee:variables>
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::errors
+output application/json
+---
+errorPayload(vars.correlationId default correlationId, 400, "APP:VALIDATION", error.description)
+]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+    </on-error-propagate>
+    <on-error-propagate type="ANY">
+      <logger level="ERROR" message="#['Unhandled ' ++ (error.description default '')]"/>
+      <ee:transform>
+        <ee:variables>
+          <ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+        </ee:variables>
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::errors
+output application/json
+---
+errorPayload(vars.correlationId default correlationId, 500, "APP:INTERNAL", "An unexpected error occurred")
+]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+    </on-error-propagate>
+  </error-handler>
+</mule>

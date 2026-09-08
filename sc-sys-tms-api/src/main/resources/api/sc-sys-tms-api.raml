@@ -1,0 +1,127 @@
+#%RAML 1.0
+title: GlobalMart SC System API — TMS
+version: v1
+baseUri: https://tms.sys.globalmart.internal/{version}
+mediaType: application/json
+protocols: [HTTPS]
+description: System API for carriers, shipment booking, and tracking events.
+
+uses:
+  err: libraries/errors.raml
+
+traits:
+  correlation:
+    headers:
+      X-Correlation-Id?: string
+
+types:
+  Carrier:
+    properties:
+      carrierId: string
+      name: string
+      mode:
+        enum: [PARCEL, LTL, FTL, OCEAN, AIR]
+      slaHours: integer
+      active: boolean
+  ShipmentCreate:
+    properties:
+      orderId: string
+      warehouseId: string
+      carrierId?: string
+      serviceLevel:
+        enum: [STANDARD, EXPEDITED, OVERNIGHT]
+      shipTo:
+        properties:
+          line1: string
+          city: string
+          postalCode: string
+          country: string
+      packages:
+        type: array
+        items:
+          properties:
+            weightKg: number
+            lengthCm?: number
+  Shipment:
+    properties:
+      shipmentId: string
+      trackingNumber: string
+      orderId: string
+      carrierId: string
+      status:
+        enum: [BOOKED, PICKED_UP, IN_TRANSIT, DELIVERED, EXCEPTION]
+      eta: datetime
+      events: object[]
+  TrackingEvent:
+    properties:
+      eventType: string
+      location?: string
+      occurredAt: datetime
+      notes?: string
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "UP", "app": "sc-sys-tms-api" }
+
+/ready:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "READY" }
+
+/carriers:
+  get:
+    is: [correlation]
+    queryParameters:
+      mode?: string
+    responses:
+      200:
+        body:
+          application/json:
+            type: Carrier[]
+
+/shipments:
+  post:
+    is: [correlation]
+    body:
+      application/json:
+        type: ShipmentCreate
+    responses:
+      201:
+        body:
+          application/json:
+            type: Shipment
+
+/shipments/{shipmentId}:
+  uriParameters:
+    shipmentId: string
+  get:
+    is: [correlation]
+    responses:
+      200:
+        body:
+          application/json:
+            type: Shipment
+      404:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/shipments/{shipmentId}/events:
+  post:
+    is: [correlation]
+    description: Carrier webhook / internal event ingest. Published to VM for async processing.
+    body:
+      application/json:
+        type: TrackingEvent
+    responses:
+      202:
+        body:
+          application/json:
+            example: { "accepted": true }

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN" name="sc-sys-erp-api">
+  <Appenders>
+    <Console name="Console" target="SYSTEM_OUT">
+      <PatternLayout>
+        <Pattern>%d{ISO8601} [%t] %-5level %logger{36} correlation=%X{correlationId} - %msg%n</Pattern>
+      </PatternLayout>
+    </Console>
+    <Console name="JsonConsole" target="SYSTEM_OUT">
+      <JsonLayout compact="true" eventEol="true" properties="true" stacktraceAsString="true"/>
+    </Console>
+  </Appenders>
+  <Loggers>
+    <AsyncRoot level="INFO">
+      <AppenderRef ref="Console"/>
+    </AsyncRoot>
+    <Logger name="org.mule.runtime.core.internal.processor.LoggerMessageProcessor" level="INFO"/>
+    <Logger name="com.globalmart" level="DEBUG"/>
+  </Loggers>
+</Configuration>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+  <flow name="get:\health:sc-prc-fulfillment-api-config">
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "UP", app: p('app.name'), env: p('app.env'), timestamp: now() }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+  <flow name="get:\ready:sc-prc-fulfillment-api-config">
+    <scatter-gather timeout="4000">
+      <route>
+        <http:request method="GET" config-ref="erp-httpreq" path="${sys.erp.basePath}/health"/>
+      </route>
+      <route>
+        <http:request method="GET" config-ref="wms-httpreq" path="${sys.wms.basePath}/health"/>
+      </route>
+      <route>
+        <http:request method="GET" config-ref="tms-httpreq" path="${sys.tms.basePath}/health"/>
+      </route>
+    </scatter-gather>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  status: "READY",
+  dependencies: payload pluck ((v, k) -> {
+    route: k as String,
+    ok: v.payload.status default "UNKNOWN"
+  })
+}
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+</mule>
