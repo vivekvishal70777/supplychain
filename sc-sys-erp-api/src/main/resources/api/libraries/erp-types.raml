@@ -1,0 +1,72 @@
+#%RAML 1.0 Library
+usage: ERP canonical types.
+
+types:
+  Money:
+    type: object
+    properties:
+      amount: number
+      currency:
+        type: string
+        minLength: 3
+        maxLength: 3
+  Address:
+    type: object
+    properties:
+      line1: string
+      city: string
+      state?: string
+      postalCode: string
+      country: string
+  Customer:
+    type: object
+    properties:
+      customerId: string
+      name: string
+      status:
+        enum: [ACTIVE, BLOCKED, INACTIVE]
+      creditLimit: Money
+      openPayables: Money
+      shipTo: Address
+  Product:
+    type: object
+    properties:
+      sku: string
+      description: string
+      uom: string
+      unitPrice: Money
+      leadTimeDays: integer
+      hazardous: boolean
+  Line:
+    type: object
+    properties:
+      lineNumber: integer
+      sku: string
+      quantity: number
+      unitPrice: Money
+  PurchaseOrderCreate:
+    type: object
+    properties:
+      customerId: string
+      requestedShipDate: date
+      lines: Line[]
+      shipTo?: Address
+  PurchaseOrderPatch:
+    type: object
+    properties:
+      status:
+        enum: [CONFIRMED, CANCELLED]
+      reason?: string
+  PurchaseOrder:
+    type: object
+    properties:
+      poId: string
+      customerId: string
+      status:
+        enum: [OPEN, CONFIRMED, ALLOCATED, SHIPPED, CANCELLED]
+      requestedShipDate: date
+      lines: Line[]
+      shipTo: Address
+      totals: Money
+      createdAt: datetime
+      updatedAt: datetime

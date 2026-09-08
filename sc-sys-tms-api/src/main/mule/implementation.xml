@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:vm="http://www.mulesoft.org/schema/mule/vm"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/vm http://www.mulesoft.org/schema/mule/vm/current/mule-vm.xsd">
+
+  <sub-flow name="impl-ensure-seed">
+    <os:contains key="seeded" objectStore="tms-store"/>
+    <choice>
+      <when expression="#[payload == false]">
+        <ee:transform>
+          <ee:variables>
+            <ee:set-variable variableName="carriers"><![CDATA[%dw 2.0
+output application/java
+---
+readUrl("classpath://data/carriers.json", "application/json")
+]]></ee:set-variable>
+            <ee:set-variable variableName="shipments"><![CDATA[%dw 2.0
+output application/java
+---
+[]
+]]></ee:set-variable>
+          </ee:variables>
+        </ee:transform>
+        <os:store key="carriers" objectStore="tms-store"><os:value>#[vars.carriers]</os:value></os:store>
+        <os:store key="shipments" objectStore="tms-store"><os:value>#[vars.shipments]</os:value></os:store>
+        <os:store key="seeded" objectStore="tms-store"><os:value>#[true]</os:value></os:store>
+      </when>
+    </choice>
+  </sub-flow>
+
+  <flow name="get:\carriers:sc-sys-tms-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="carriers" objectStore="tms-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var mode = attributes.queryParams.mode
+---
+payload filter ((c) -> mode == null or c.mode == mode)
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+
+  <flow name="post:\shipments:sc-sys-tms-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <set-variable variableName="request" value="#[payload]"/>
+    <os:retrieve key="carriers" objectStore="tms-store" target="carriers"/>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="carrier"><![CDATA[%dw 2.0
+output application/java
+var requested = vars.request.carrierId
+---
+if (requested != null)
+  (vars.carriers filter ((c) -> c.carrierId == requested and c.active))[0] default null
+else
+  (vars.carriers filter ((c) -> c.mode == "PARCEL" and c.active))[0]
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <choice>
+      <when expression="#[vars.carrier == null]">
+        <raise-error type="APP:VALIDATION" description="No active carrier available for booking"/>
+      </when>
+    </choice>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="shipment"><![CDATA[%dw 2.0
+output application/java
+var sla = vars.carrier.slaHours as Number
+var service = vars.request.serviceLevel default "STANDARD"
+var multiplier = service match {
+  case "OVERNIGHT" -> 0.25
+  case "EXPEDITED" -> 0.5
+  else -> 1
+}
+---
+{
+  shipmentId: "SHP-" ++ (randomInt(900000) + 100000) as String,
+  trackingNumber: "1Z" ++ upper(uuid()[0 to 11] replace "-" with ""),
+  orderId: vars.request.orderId,
+  warehouseId: vars.request.warehouseId,
+  carrierId: vars.carrier.carrierId,
+  serviceLevel: service,
+  status: "BOOKED",
+  eta: now() + ((sla * multiplier) as Number {unit: "hours"}),
+  shipTo: vars.request.shipTo,
+  events: [{
+    eventType: "BOOKED",
+    location: vars.request.warehouseId,
+    occurredAt: now(),
+    notes: "Shipment booked"
+  }]
+}
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <os:retrieve key="shipments" objectStore="tms-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload ++ [vars.shipment]
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <os:store key="shipments" objectStore="tms-store"/>
+    <set-payload value="#[vars.shipment]"/>
+    <set-variable variableName="httpStatus" value="#[201]"/>
+  </flow>
+
+  <flow name="get:\shipments\(shipmentId):sc-sys-tms-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="shipments" objectStore="tms-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var id = attributes.uriParams.shipmentId
+---
+(payload filter ((s) -> s.shipmentId == id))[0] default null
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <choice>
+      <when expression="#[payload == null]">
+        <raise-error type="APP:NOT_FOUND" description="#['Shipment ' ++ attributes.uriParams.shipmentId ++ ' not found']"/>
+      </when>
+    </choice>
+  </flow>
+
+  <flow name="post:\shipments\(shipmentId)\events:sc-sys-tms-api-config">
+    <set-variable variableName="shipmentId" value="#[attributes.uriParams.shipmentId]"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload ++ { shipmentId: vars.shipmentId, correlationId: vars.correlationId }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <vm:publish config-ref="vm-config" queueName="tracking-events" sendCorrelationId="ALWAYS">
+      <vm:content>#[payload]</vm:content>
+    </vm:publish>
+    <set-variable variableName="httpStatus" value="#[202]"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ accepted: true }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+
+  <!-- Async consumer: apply tracking event to the shipment record. Failures go to DLQ. -->
+  <flow name="tracking-event-consumer">
+    <vm:listener config-ref="vm-config" queueName="tracking-events" numberOfConsumers="2"/>
+    <try>
+      <set-variable variableName="event" value="#[payload]"/>
+      <flow-ref name="impl-ensure-seed"/>
+      <os:retrieve key="shipments" objectStore="tms-store"/>
+      <ee:transform>
+        <ee:variables>
+          <ee:set-variable variableName="updated"><![CDATA[%dw 2.0
+output application/java
+var id = vars.event.shipmentId
+var nextStatus = vars.event.eventType match {
+  case "PICKED_UP" -> "PICKED_UP"
+  case "IN_TRANSIT" -> "IN_TRANSIT"
+  case "DELIVERED" -> "DELIVERED"
+  case "EXCEPTION" -> "EXCEPTION"
+  else -> "IN_TRANSIT"
+}
+---
+payload map ((s) ->
+  if (s.shipmentId == id)
+    s ++ {
+      status: nextStatus,
+      events: (s.events default []) ++ [{
+        eventType: vars.event.eventType,
+        location: vars.event.location,
+        occurredAt: vars.event.occurredAt default now(),
+        notes: vars.event.notes
+      }]
+    }
+  else s
+)
+]]></ee:set-variable>
+        </ee:variables>
+      </ee:transform>
+      <os:store key="shipments" objectStore="tms-store"><os:value>#[vars.updated]</os:value></os:store>
+      <logger level="INFO" message="#['Applied tracking event ' ++ vars.event.eventType ++ ' to ' ++ vars.event.shipmentId]"/>
+      <error-handler>
+        <on-error-continue type="ANY">
+          <logger level="ERROR" message="#['Tracking event failed, routing to DLQ: ' ++ (error.description default '')]"/>
+          <vm:publish config-ref="vm-config" queueName="tracking-events-dlq">
+            <vm:content>#[vars.event]</vm:content>
+          </vm:publish>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </flow>
+</mule>

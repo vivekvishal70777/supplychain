@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd">
+
+  <configuration-properties file="config/config-${mule.env}.yaml"/>
+  <configuration defaultErrorHandler-ref="global-error-handler" defaultResponseTimeout="30000"/>
+
+  <http:listener-config name="http-listener-config">
+    <http:listener-connection host="${http.host}" port="${http.port}"/>
+  </http:listener-config>
+
+  <os:config name="os-config"/>
+  <os:object-store name="wms-store"
+                   persistent="${objectstore.persistent}"
+                   maxEntries="${objectstore.maxEntries}"
+                   entryTtl="${objectstore.entryTtlHours}"
+                   entryTtlUnit="HOURS"
+                   config-ref="os-config"/>
+
+  <apikit:config name="sc-sys-wms-api-config"
+                 api="api/sc-sys-wms-api.raml"
+                 outboundHeadersMapName="outboundHeaders"
+                 httpStatusVarName="httpStatus"
+                 consoleEnabled="${apikit.consoleEnabled}"/>
+</mule>

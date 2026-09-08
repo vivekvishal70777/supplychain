@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Production pattern: encrypt secrets with the Secure Configuration Properties module.
+
+  1. Create a 16-byte key (do not commit it). Store in a secrets manager or Runtime Fabric property.
+  2. Encrypt values: java -cp secure-properties-tool.jar com.mulesoft.tools.SecurePropertiesTool \
+       string encrypt AES CBC <key> "super-secret"
+  3. Put encrypted values in config/secure-prod.yaml as !![string] "encrypted..."
+  4. Uncomment/copy this file into src/main/mule/global-secure.xml
+-->
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+  <secure-properties:config name="secure-properties-config"
+                            file="config/secure-${mule.env}.yaml"
+                            key="${secure.key}"
+                            fileType="YAML">
+    <secure-properties:encrypt algorithm="AES" mode="CBC"/>
+  </secure-properties:config>
+</mule>

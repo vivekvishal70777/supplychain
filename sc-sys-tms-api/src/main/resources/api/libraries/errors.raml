@@ -1,0 +1,12 @@
+#%RAML 1.0 Library
+usage: Canonical error contract.
+types:
+  ErrorResponse:
+    type: object
+    properties:
+      correlationId: string
+      timestamp: datetime
+      status: integer
+      errorCode: string
+      message: string
+      details?: any

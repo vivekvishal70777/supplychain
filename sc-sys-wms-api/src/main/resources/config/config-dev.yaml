@@ -1,0 +1,13 @@
+http:
+  host: "0.0.0.0"
+  port: "8092"
+  basePath: "/api"
+app:
+  name: "sc-sys-wms-api"
+  env: "dev"
+apikit:
+  consoleEnabled: true
+objectstore:
+  persistent: true
+  maxEntries: "50000"
+  entryTtlHours: "72"

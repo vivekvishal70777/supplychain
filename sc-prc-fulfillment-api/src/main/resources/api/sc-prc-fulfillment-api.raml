@@ -1,0 +1,157 @@
+#%RAML 1.0
+title: GlobalMart SC Process API — Fulfillment
+version: v1
+baseUri: https://fulfillment.prc.globalmart.internal/{version}
+mediaType: application/json
+protocols: [HTTPS]
+description: |
+  Orchestrates order-to-fulfillment: customer credit (ERP), inventory allocation (WMS),
+  shipment booking (TMS). Experience APIs call this layer — never System APIs directly.
+
+uses:
+  err: libraries/errors.raml
+
+traits:
+  correlation:
+    headers:
+      X-Correlation-Id?: string
+
+types:
+  Money:
+    properties:
+      amount: number
+      currency: string
+  OrderLine:
+    properties:
+      sku: string
+      quantity: integer
+  FulfillmentRequest:
+    properties:
+      customerId: string
+      requestedShipDate: date
+      serviceLevel:
+        enum: [STANDARD, EXPEDITED, OVERNIGHT]
+        default: STANDARD
+      lines: OrderLine[]
+      shipTo:
+        properties:
+          line1: string
+          city: string
+          postalCode: string
+          country: string
+  FulfillmentOrder:
+    properties:
+      fulfillmentId: string
+      poId: string
+      allocationId?: string
+      shipmentId?: string
+      trackingNumber?: string
+      status:
+        enum: [RECEIVED, CREDIT_HOLD, BACKORDER, ALLOCATED, BOOKED, CANCELLED, FAILED]
+      customerId: string
+      lines: object[]
+      totals: Money
+      createdAt: datetime
+  AvailabilityRequest:
+    properties:
+      lines: OrderLine[]
+      warehouseId?: string
+  AvailabilityResponse:
+    properties:
+      fullyAvailable: boolean
+      lines: object[]
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "UP", "app": "sc-prc-fulfillment-api" }
+
+/ready:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "READY" }
+
+/fulfillment/orders:
+  post:
+    is: [correlation]
+    headers:
+      X-Idempotency-Key:
+        type: string
+        required: true
+    body:
+      application/json:
+        type: FulfillmentRequest
+    responses:
+      201:
+        body:
+          application/json:
+            type: FulfillmentOrder
+      409:
+        body:
+          application/json:
+            type: err.ErrorResponse
+      422:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/fulfillment/orders/{fulfillmentId}:
+  uriParameters:
+    fulfillmentId: string
+  get:
+    is: [correlation]
+    responses:
+      200:
+        body:
+          application/json:
+            type: FulfillmentOrder
+      404:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/fulfillment/orders/{fulfillmentId}/cancel:
+  post:
+    is: [correlation]
+    body:
+      application/json:
+        properties:
+          reason: string
+    responses:
+      200:
+        body:
+          application/json:
+            type: FulfillmentOrder
+      409:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/inventory/availability:
+  post:
+    is: [correlation]
+    body:
+      application/json:
+        type: AvailabilityRequest
+    responses:
+      200:
+        body:
+          application/json:
+            type: AvailabilityResponse
+
+/shipments/{shipmentId}:
+  uriParameters:
+    shipmentId: string
+  get:
+    is: [correlation]
+    responses:
+      200:
+        body:
+          application/json:
+            type: object

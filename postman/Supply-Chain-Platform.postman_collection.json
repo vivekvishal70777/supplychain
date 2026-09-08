@@ -1,0 +1,74 @@
+{
+  "info": {
+    "name": "GlobalMart Supply Chain Platform",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Local ports: Experience 8081, Process 8082, ERP 8091, WMS 8092, TMS 8093."
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Experience health",
+          "request": { "method": "GET", "url": "http://localhost:8081/api/health" }
+        },
+        {
+          "name": "Process ready",
+          "request": { "method": "GET", "url": "http://localhost:8082/api/ready" }
+        }
+      ]
+    },
+    {
+      "name": "Happy path — place order",
+      "item": [
+        {
+          "name": "Create portal order",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Correlation-Id", "value": "{{$guid}}" },
+              { "key": "X-Idempotency-Key", "value": "demo-order-001" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-1001\",\n  \"requestedShipDate\": \"2026-09-20\",\n  \"serviceLevel\": \"STANDARD\",\n  \"lines\": [{ \"sku\": \"SKU-WIDGET-A\", \"quantity\": 4 }],\n  \"shipTo\": {\n    \"line1\": \"500 Market St\",\n    \"city\": \"Chicago\",\n    \"postalCode\": \"60601\",\n    \"country\": \"US\"\n  }\n}"
+            },
+            "url": "http://localhost:8081/api/orders"
+          }
+        },
+        {
+          "name": "Get inventory SKU-WIDGET-A",
+          "request": { "method": "GET", "url": "http://localhost:8081/api/inventory/SKU-WIDGET-A" }
+        },
+        {
+          "name": "Credit hold customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Idempotency-Key", "value": "blocked-001" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customerId\": \"CUST-2099\",\n  \"requestedShipDate\": \"2026-09-20\",\n  \"lines\": [{ \"sku\": \"SKU-WIDGET-A\", \"quantity\": 1 }],\n  \"shipTo\": { \"line1\": \"9 Freight Rd\", \"city\": \"Houston\", \"postalCode\": \"77002\", \"country\": \"US\" }\n}"
+            },
+            "url": "http://localhost:8081/api/orders"
+          }
+        },
+        {
+          "name": "Submit ASN",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"supplierId\": \"SUP-44\",\n  \"expectedArrival\": \"2026-09-12\",\n  \"lines\": [{ \"sku\": \"SKU-WIDGET-B\", \"quantity\": 200 }]\n}"
+            },
+            "url": "http://localhost:8081/api/asns"
+          }
+        }
+      ]
+    }
+  ]
+}

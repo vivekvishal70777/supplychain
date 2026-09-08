@@ -1,0 +1,399 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <sub-flow name="impl-check-circuit">
+    <set-variable variableName="circuitKey" value="#[vars.circuitName default 'default']"/>
+    <try>
+      <os:retrieve key="#[vars.circuitKey]" objectStore="circuit-store"/>
+      <choice>
+        <when expression="#[payload != null and payload.open == true and (now() as Number) &lt; (payload.openUntil as Number)]">
+          <raise-error type="APP:CIRCUIT_OPEN" description="#['Circuit open for ' ++ vars.circuitKey]"/>
+        </when>
+      </choice>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <logger level="DEBUG" message="#['Circuit closed (no state) for ' ++ vars.circuitKey]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </sub-flow>
+
+  <sub-flow name="impl-record-circuit-failure">
+    <try>
+      <os:retrieve key="#[vars.circuitKey]" objectStore="circuit-store" target="circuit"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-variable variableName="circuit" value="#[{ failures: 0, open: false }]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+var failures = ((vars.circuit.failures default 0) as Number) + 1
+var threshold = p('circuit.failureThreshold') as Number
+var openMs = p('circuit.openMs') as Number
+---
+{
+  failures: failures,
+  open: failures >= threshold,
+  openUntil: if (failures >= threshold) ((now() as Number) + openMs) else 0
+}
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <os:store key="#[vars.circuitKey]" objectStore="circuit-store"/>
+  </sub-flow>
+
+  <flow name="post:\fulfillment\orders:sc-prc-fulfillment-api-config">
+    <set-variable variableName="idempotencyKey" value="#[attributes.headers['x-idempotency-key'] default attributes.headers['X-Idempotency-Key']]"/>
+    <set-variable variableName="request" value="#[payload]"/>
+    <choice>
+      <when expression="#[isEmpty(vars.idempotencyKey)]">
+        <raise-error type="APP:VALIDATION" description="X-Idempotency-Key is required"/>
+      </when>
+      <when expression="#[isEmpty(vars.request.lines)]">
+        <raise-error type="APP:VALIDATION" description="At least one order line is required"/>
+      </when>
+    </choice>
+    <os:contains key="#[vars.idempotencyKey]" objectStore="idempotency-store"/>
+    <choice>
+      <when expression="#[payload == true]">
+        <os:retrieve key="#[vars.idempotencyKey]" objectStore="idempotency-store"/>
+        <set-variable variableName="httpStatus" value="#[200]"/>
+      </when>
+      <otherwise>
+        <flow-ref name="impl-orchestrate-fulfillment"/>
+      </otherwise>
+    </choice>
+  </flow>
+
+  <sub-flow name="impl-orchestrate-fulfillment">
+    <logger level="INFO" message="#['Fulfillment start customer=' ++ vars.request.customerId ++ ' corr=' ++ vars.correlationId]"/>
+
+    <!-- Parallel: customer credit + product enrichment from ERP, inventory snapshot from WMS -->
+    <scatter-gather timeout="10000">
+      <route>
+        <set-variable variableName="circuitName" value="erp"/>
+        <flow-ref name="impl-check-circuit"/>
+        <until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.millisBetween}">
+          <http:request method="GET" config-ref="erp-httpreq" path="${sys.erp.basePath}/customers/{customerId}">
+            <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+            <http:uri-params><![CDATA[#[{ customerId: vars.request.customerId }]]]></http:uri-params>
+          </http:request>
+        </until-successful>
+      </route>
+      <route>
+        <http:request method="GET" config-ref="wms-httpreq"
+                      path="${sys.wms.basePath}/inventory/{sku}">
+          <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+          <http:uri-params><![CDATA[#[{ sku: vars.request.lines[0].sku }]]]></http:uri-params>
+        </http:request>
+      </route>
+    </scatter-gather>
+    <set-variable variableName="customer" value="#[payload[0].payload]"/>
+    <set-variable variableName="inventorySnapshot" value="#[payload[1].payload]"/>
+
+    <choice>
+      <when expression="#[vars.customer.status == 'BLOCKED']">
+        <raise-error type="APP:CREDIT_HOLD" description="Customer is blocked in ERP"/>
+      </when>
+      <when expression="#[(vars.customer.openPayables.amount default 0) &gt;= (vars.customer.creditLimit.amount default 0)]">
+        <raise-error type="APP:CREDIT_HOLD" description="Customer has insufficient remaining credit"/>
+      </when>
+    </choice>
+
+    <!-- Create PO in ERP (idempotent using same key) -->
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  customerId: vars.request.customerId,
+  requestedShipDate: vars.request.requestedShipDate,
+  lines: vars.request.lines,
+  shipTo: vars.request.shipTo
+}
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.millisBetween}">
+      <http:request method="POST" config-ref="erp-httpreq" path="${sys.erp.basePath}/purchase-orders">
+        <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId, vars.idempotencyKey)
+]]></http:headers>
+      </http:request>
+    </until-successful>
+    <set-variable variableName="purchaseOrder" value="#[payload]"/>
+
+    <!-- Allocate in WMS -->
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  orderId: vars.purchaseOrder.poId,
+  lines: vars.request.lines
+}
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <try>
+      <until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.millisBetween}">
+        <http:request method="POST" config-ref="wms-httpreq" path="${sys.wms.basePath}/inventory/allocate">
+          <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+        </http:request>
+      </until-successful>
+      <error-handler>
+        <on-error-propagate type="HTTP:BAD_REQUEST, HTTP:CLIENT_SECURITY, HTTP:NOT_FOUND, ANY">
+          <flow-ref name="impl-compensate-cancel-po"/>
+          <raise-error type="APP:BACKORDER" description="WMS could not allocate inventory"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+    <set-variable variableName="allocation" value="#[payload]"/>
+
+    <!-- Book shipment in TMS; compensate allocation if booking fails -->
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  orderId: vars.purchaseOrder.poId,
+  warehouseId: vars.allocation.warehouseId,
+  serviceLevel: vars.request.serviceLevel default "STANDARD",
+  shipTo: vars.request.shipTo,
+  packages: [{ weightKg: 5 }]
+}
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <try>
+      <until-successful maxRetries="${retry.maxRetries}" millisBetweenRetries="${retry.millisBetween}">
+        <http:request method="POST" config-ref="tms-httpreq" path="${sys.tms.basePath}/shipments">
+          <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+        </http:request>
+      </until-successful>
+      <error-handler>
+        <on-error-propagate type="ANY">
+          <flow-ref name="impl-compensate-release-allocation"/>
+          <raise-error type="APP:DEPENDENCY" description="TMS booking failed; allocation released"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+    <set-variable variableName="shipment" value="#[payload]"/>
+
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="fulfillment"><![CDATA[%dw 2.0
+output application/java
+---
+{
+  fulfillmentId: "FUL-" ++ uuid(),
+  poId: vars.purchaseOrder.poId,
+  allocationId: vars.allocation.allocationId,
+  shipmentId: vars.shipment.shipmentId,
+  trackingNumber: vars.shipment.trackingNumber,
+  status: "BOOKED",
+  customerId: vars.request.customerId,
+  lines: vars.allocation.lines,
+  totals: vars.purchaseOrder.totals,
+  createdAt: now()
+}
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <os:store key="#[vars.fulfillment.fulfillmentId]" objectStore="fulfillment-store">
+      <os:value>#[vars.fulfillment]</os:value>
+    </os:store>
+    <os:store key="#[vars.idempotencyKey]" objectStore="idempotency-store">
+      <os:value>#[vars.fulfillment]</os:value>
+    </os:store>
+    <set-payload value="#[vars.fulfillment]"/>
+    <set-variable variableName="httpStatus" value="#[201]"/>
+    <logger level="INFO" message="#['Fulfillment booked ' ++ vars.fulfillment.fulfillmentId ++ ' tracking=' ++ vars.fulfillment.trackingNumber]"/>
+  </sub-flow>
+
+  <sub-flow name="impl-compensate-cancel-po">
+    <try>
+      <http:request method="PATCH" config-ref="erp-httpreq" path="${sys.erp.basePath}/purchase-orders/{poId}">
+        <http:body><![CDATA[#[{ status: "CANCELLED", reason: "allocation-failed" }]]]></http:body>
+        <http:uri-params><![CDATA[#[{ poId: vars.purchaseOrder.poId }]]]></http:uri-params>
+        <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+      </http:request>
+      <error-handler>
+        <on-error-continue type="ANY">
+          <logger level="ERROR" message="#['Compensation cancel PO failed for ' ++ (vars.purchaseOrder.poId default '')]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </sub-flow>
+
+  <sub-flow name="impl-compensate-release-allocation">
+    <try>
+      <http:request method="POST" config-ref="wms-httpreq" path="${sys.wms.basePath}/inventory/release">
+        <http:body><![CDATA[#[{ allocationId: vars.allocation.allocationId, reason: "tms-booking-failed" }]]]></http:body>
+        <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+      </http:request>
+      <error-handler>
+        <on-error-continue type="ANY">
+          <logger level="ERROR" message="Compensation release allocation failed"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+  </sub-flow>
+
+  <flow name="get:\fulfillment\orders\(fulfillmentId):sc-prc-fulfillment-api-config">
+    <try>
+      <os:retrieve key="#[attributes.uriParams.fulfillmentId]" objectStore="fulfillment-store"/>
+      <error-handler>
+        <on-error-propagate type="OS:KEY_NOT_FOUND">
+          <raise-error type="APP:NOT_FOUND" description="#['Fulfillment ' ++ attributes.uriParams.fulfillmentId ++ ' not found']"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <flow name="post:\fulfillment\orders\(fulfillmentId)\cancel:sc-prc-fulfillment-api-config">
+    <set-variable variableName="fulfillmentId" value="#[attributes.uriParams.fulfillmentId]"/>
+    <set-variable variableName="reason" value="#[payload.reason]"/>
+    <try>
+      <os:retrieve key="#[vars.fulfillmentId]" objectStore="fulfillment-store" target="existing"/>
+      <error-handler>
+        <on-error-propagate type="OS:KEY_NOT_FOUND">
+          <raise-error type="APP:NOT_FOUND" description="Fulfillment not found"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+    <choice>
+      <when expression="#[vars.existing.status == 'CANCELLED']">
+        <raise-error type="APP:CONFLICT" description="Fulfillment already cancelled"/>
+      </when>
+    </choice>
+    <set-variable variableName="allocation" value="#[{ allocationId: vars.existing.allocationId }]"/>
+    <flow-ref name="impl-compensate-release-allocation"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.existing ++ { status: "CANCELLED", reason: vars.reason, updatedAt: now() }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <os:store key="#[vars.fulfillmentId]" objectStore="fulfillment-store"/>
+  </flow>
+
+  <flow name="post:\inventory\availability:sc-prc-fulfillment-api-config">
+    <set-variable variableName="lines" value="#[payload.lines]"/>
+    <foreach collection="#[vars.lines]">
+      <http:request method="GET" config-ref="wms-httpreq" path="${sys.wms.basePath}/inventory/{sku}">
+        <http:uri-params><![CDATA[#[{ sku: payload.sku }]]]></http:uri-params>
+        <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+      </http:request>
+      <ee:transform>
+        <ee:variables>
+          <ee:set-variable variableName="checked"><![CDATA[%dw 2.0
+output application/java
+var requested = vars.lines filter ((l) -> l.sku == attributes.uriParams.sku)[0].quantity default payload[0].sku
+var available = (payload reduce ((r, acc = 0) -> acc + r.available) ) as Number
+---
+(vars.checked default []) ++ [{
+  sku: payload[0].sku,
+  available: available,
+  warehouseId: payload[0].warehouseId,
+  enough: available >= (vars.lines filter ((l) -> l.sku == payload[0].sku))[0].quantity
+}]
+]]></ee:set-variable>
+        </ee:variables>
+      </ee:transform>
+    </foreach>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  fullyAvailable: (vars.checked every ((c) -> c.enough == true)),
+  lines: vars.checked
+}
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+
+  <flow name="get:\shipments\(shipmentId):sc-prc-fulfillment-api-config">
+    <http:request method="GET" config-ref="tms-httpreq" path="${sys.tms.basePath}/shipments/{shipmentId}">
+      <http:uri-params><![CDATA[#[{ shipmentId: attributes.uriParams.shipmentId }]]]></http:uri-params>
+      <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+sysHeaders(vars.correlationId)
+]]></http:headers>
+    </http:request>
+  </flow>
+
+  <!-- Nightly-style inventory watermark (demo cadence: every 15 minutes) -->
+  <flow name="scheduler-inventory-heartbeat">
+    <scheduler>
+      <scheduling-strategy>
+        <fixed-frequency frequency="15" timeUnit="MINUTES" startDelay="2"/>
+      </scheduling-strategy>
+    </scheduler>
+    <logger level="INFO" message="Inventory reconciliation heartbeat — poll WMS warehouses"/>
+    <http:request method="GET" config-ref="wms-httpreq" path="${sys.wms.basePath}/warehouses"/>
+    <logger level="INFO" message="#['WMS warehouses visible: ' ++ sizeOf(payload)]"/>
+  </flow>
+</mule>

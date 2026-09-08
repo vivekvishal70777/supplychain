@@ -1,0 +1,5 @@
+[
+  { "carrierId": "CR-UPS", "name": "UPS", "mode": "PARCEL", "slaHours": 48, "active": true },
+  { "carrierId": "CR-FDX", "name": "FedEx", "mode": "PARCEL", "slaHours": 24, "active": true },
+  { "carrierId": "CR-SCHN", "name": "Schneider", "mode": "FTL", "slaHours": 96, "active": true }
+]

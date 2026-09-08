@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <sub-flow name="impl-ensure-seed">
+    <os:contains key="seeded" objectStore="erp-store"/>
+    <choice>
+      <when expression="#[payload == false]">
+        <ee:transform>
+          <ee:variables>
+            <ee:set-variable variableName="customers"><![CDATA[%dw 2.0
+output application/java
+---
+readUrl("classpath://data/customers.json", "application/json")
+]]></ee:set-variable>
+            <ee:set-variable variableName="products"><![CDATA[%dw 2.0
+output application/java
+---
+readUrl("classpath://data/products.json", "application/json")
+]]></ee:set-variable>
+            <ee:set-variable variableName="orders"><![CDATA[%dw 2.0
+output application/java
+---
+[]
+]]></ee:set-variable>
+          </ee:variables>
+        </ee:transform>
+        <os:store key="customers" objectStore="erp-store"><os:value>#[vars.customers]</os:value></os:store>
+        <os:store key="products" objectStore="erp-store"><os:value>#[vars.products]</os:value></os:store>
+        <os:store key="purchase-orders" objectStore="erp-store"><os:value>#[vars.orders]</os:value></os:store>
+        <os:store key="seeded" objectStore="erp-store"><os:value>#[true]</os:value></os:store>
+      </when>
+    </choice>
+  </sub-flow>
+
+  <flow name="get:\customers\(customerId):sc-sys-erp-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="customers" objectStore="erp-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var id = attributes.uriParams.customerId
+var found = payload filter ((c) -> c.customerId == id)
+---
+found[0] default null
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <choice>
+      <when expression="#[payload == null]">
+        <raise-error type="APP:NOT_FOUND" description="#['Customer ' ++ attributes.uriParams.customerId ++ ' not found']"/>
+      </when>
+    </choice>
+  </flow>
+
+  <flow name="get:\products\(sku):sc-sys-erp-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="products" objectStore="erp-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var sku = attributes.uriParams.sku
+var found = payload filter ((p) -> p.sku == sku)
+---
+found[0] default null
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <choice>
+      <when expression="#[payload == null]">
+        <raise-error type="APP:NOT_FOUND" description="#['Product ' ++ attributes.uriParams.sku ++ ' not found']"/>
+      </when>
+    </choice>
+  </flow>
+
+  <flow name="get:\purchase-orders:sc-sys-erp-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="purchase-orders" objectStore="erp-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var status = attributes.queryParams.status
+var customerId = attributes.queryParams.customerId
+---
+payload filter ((po) ->
+  (status == null or po.status == status) and
+  (customerId == null or po.customerId == customerId)
+)
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+
+  <flow name="post:\purchase-orders:sc-sys-erp-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <set-variable variableName="idempotencyKey" value="#[attributes.headers['x-idempotency-key'] default attributes.headers['X-Idempotency-Key']]"/>
+    <choice>
+      <when expression="#[isEmpty(vars.idempotencyKey)]">
+        <raise-error type="APP:VALIDATION" description="X-Idempotency-Key is required"/>
+      </when>
+    </choice>
+    <os:contains key="#[vars.idempotencyKey]" objectStore="idempotency-store"/>
+    <choice>
+      <when expression="#[payload == true]">
+        <os:retrieve key="#[vars.idempotencyKey]" objectStore="idempotency-store"/>
+        <set-variable variableName="httpStatus" value="#[200]"/>
+      </when>
+      <otherwise>
+        <flow-ref name="impl-create-po"/>
+      </otherwise>
+    </choice>
+  </flow>
+
+  <sub-flow name="impl-create-po">
+    <os:retrieve key="customers" objectStore="erp-store" target="customers"/>
+    <os:retrieve key="products" objectStore="erp-store" target="products"/>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="customer"><![CDATA[%dw 2.0
+output application/java
+var id = payload.customerId
+---
+(vars.customers filter ((c) -> c.customerId == id))[0] default null
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <choice>
+      <when expression="#[vars.customer == null]">
+        <raise-error type="APP:NOT_FOUND" description="#['Customer ' ++ payload.customerId ++ ' not found']"/>
+      </when>
+      <when expression="#[vars.customer.status == 'BLOCKED']">
+        <raise-error type="APP:CREDIT_HOLD" description="Customer is blocked in ERP"/>
+      </when>
+    </choice>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="newPo"><![CDATA[%dw 2.0
+output application/java
+var lines = payload.lines map ((l, i) -> do {
+  var product = (vars.products filter ((p) -> p.sku == l.sku))[0]
+  ---
+  {
+    lineNumber: i + 1,
+    sku: l.sku,
+    quantity: l.quantity,
+    unitPrice: l.unitPrice default product.unitPrice
+  }
+})
+var total = lines reduce ((l, acc = 0) -> acc + ((l.unitPrice.amount default 0) * l.quantity))
+---
+{
+  poId: "PO-" ++ (randomInt(900000) + 100000) as String,
+  customerId: payload.customerId,
+  status: "OPEN",
+  requestedShipDate: payload.requestedShipDate,
+  lines: lines,
+  shipTo: payload.shipTo default vars.customer.shipTo,
+  totals: { amount: total, currency: "USD" },
+  createdAt: now(),
+  updatedAt: now()
+}
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <os:retrieve key="purchase-orders" objectStore="erp-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload ++ [vars.newPo]
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <os:store key="purchase-orders" objectStore="erp-store"/>
+    <os:store key="#[vars.idempotencyKey]" objectStore="idempotency-store">
+      <os:value>#[vars.newPo]</os:value>
+    </os:store>
+    <set-payload value="#[vars.newPo]"/>
+    <set-variable variableName="httpStatus" value="#[201]"/>
+  </sub-flow>
+
+  <flow name="get:\purchase-orders\(poId):sc-sys-erp-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="purchase-orders" objectStore="erp-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var id = attributes.uriParams.poId
+---
+(payload filter ((po) -> po.poId == id))[0] default null
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <choice>
+      <when expression="#[payload == null]">
+        <raise-error type="APP:NOT_FOUND" description="#['Purchase order ' ++ attributes.uriParams.poId ++ ' not found']"/>
+      </when>
+    </choice>
+  </flow>
+
+  <flow name="patch:\purchase-orders\(poId):sc-sys-erp-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <set-variable variableName="poId" value="#[attributes.uriParams.poId]"/>
+    <set-variable variableName="patchBody" value="#[payload]"/>
+    <os:retrieve key="purchase-orders" objectStore="erp-store"/>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="existing"><![CDATA[%dw 2.0
+output application/java
+---
+(payload filter ((po) -> po.poId == vars.poId))[0] default null
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <choice>
+      <when expression="#[vars.existing == null]">
+        <raise-error type="APP:NOT_FOUND" description="#['Purchase order ' ++ vars.poId ++ ' not found']"/>
+      </when>
+      <when expression="#[vars.existing.status == 'CANCELLED' or vars.existing.status == 'SHIPPED']">
+        <raise-error type="APP:CONFLICT" description="PO cannot be updated in its current status"/>
+      </when>
+    </choice>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="updated"><![CDATA[%dw 2.0
+output application/java
+---
+vars.existing ++ {
+  status: vars.patchBody.status,
+  updatedAt: now(),
+  reason: vars.patchBody.reason
+}
+]]></ee:set-variable>
+      </ee:variables>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload map ((po) -> if (po.poId == vars.poId) vars.updated else po)
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <os:store key="purchase-orders" objectStore="erp-store"/>
+    <set-payload value="#[vars.updated]"/>
+  </flow>
+</mule>

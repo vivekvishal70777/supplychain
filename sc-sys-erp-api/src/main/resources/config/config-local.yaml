@@ -1,0 +1,21 @@
+http:
+  host: "0.0.0.0"
+  port: "8091"
+  basePath: "/api"
+https:
+  enabled: false
+  port: "8443"
+app:
+  name: "sc-sys-erp-api"
+  env: "local"
+apikit:
+  consoleEnabled: true
+objectstore:
+  persistent: false
+  maxEntries: "10000"
+  entryTtlHours: "24"
+logging:
+  json: false
+circuit:
+  failureThreshold: "5"
+  openMs: "30000"

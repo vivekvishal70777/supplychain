@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <flow name="post:\orders:sc-exp-portal-api-config">
+    <set-variable variableName="idempotencyKey" value="#[attributes.headers['x-idempotency-key'] default attributes.headers['X-Idempotency-Key']]"/>
+    <choice>
+      <when expression="#[isEmpty(vars.idempotencyKey)]">
+        <raise-error type="APP:VALIDATION" description="X-Idempotency-Key is required"/>
+      </when>
+    </choice>
+    <http:request method="POST" config-ref="prc-httpreq" path="${prc.basePath}/fulfillment/orders">
+      <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+prcHeaders(vars.correlationId, vars.idempotencyKey)
+]]></http:headers>
+    </http:request>
+    <set-variable variableName="created" value="#[payload]"/>
+    <try>
+      <os:retrieve key="order-index" objectStore="order-index-store" target="index"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-variable variableName="index" value="#[[]]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+    <os:store key="order-index" objectStore="order-index-store">
+      <os:value>#[vars.index ++ [vars.created.fulfillmentId]]</os:value>
+    </os:store>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::portal
+output application/json
+---
+toPortalOrder(vars.created)
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <set-variable variableName="httpStatus" value="#[201]"/>
+  </flow>
+
+  <flow name="get:\orders:sc-exp-portal-api-config">
+    <set-variable variableName="page" value="#[(attributes.queryParams.page default 0) as Number]"/>
+    <set-variable variableName="size" value="#[(attributes.queryParams.size default 25) as Number]"/>
+    <try>
+      <os:retrieve key="order-index" objectStore="order-index-store"/>
+      <error-handler>
+        <on-error-continue type="OS:KEY_NOT_FOUND">
+          <set-payload value="#[[]]"/>
+        </on-error-continue>
+      </error-handler>
+    </try>
+    <set-variable variableName="ids" value="#[payload]"/>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="slice"><![CDATA[%dw 2.0
+output application/java
+var start = vars.page * vars.size
+---
+vars.ids[start to (start + vars.size - 1)] default []
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <set-variable variableName="items" value="#[[]]"/>
+    <foreach collection="#[vars.slice]">
+      <try>
+        <http:request method="GET" config-ref="prc-httpreq" path="${prc.basePath}/fulfillment/orders/{id}">
+          <http:uri-params><![CDATA[#[{ id: payload }]]]></http:uri-params>
+          <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+prcHeaders(vars.correlationId)
+]]></http:headers>
+        </http:request>
+        <ee:transform>
+          <ee:variables>
+            <ee:set-variable variableName="items"><![CDATA[%dw 2.0
+import * from modules::portal
+output application/java
+---
+vars.items ++ [toPortalOrder(payload)]
+]]></ee:set-variable>
+          </ee:variables>
+        </ee:transform>
+        <error-handler>
+          <on-error-continue type="ANY">
+            <logger level="WARN" message="Skipping order that could not be loaded"/>
+          </on-error-continue>
+        </error-handler>
+      </try>
+    </foreach>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ page: vars.page, size: vars.size, items: vars.items }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+
+  <flow name="get:\orders\(orderId):sc-exp-portal-api-config">
+    <try>
+      <http:request method="GET" config-ref="prc-httpreq" path="${prc.basePath}/fulfillment/orders/{id}">
+        <http:uri-params><![CDATA[#[{ id: attributes.uriParams.orderId }]]]></http:uri-params>
+        <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+prcHeaders(vars.correlationId)
+]]></http:headers>
+      </http:request>
+      <ee:transform>
+        <ee:message>
+          <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::portal
+output application/json
+---
+toPortalOrder(payload)
+]]></ee:set-payload>
+        </ee:message>
+      </ee:transform>
+      <error-handler>
+        <on-error-propagate type="HTTP:NOT_FOUND">
+          <raise-error type="APP:NOT_FOUND" description="Order not found"/>
+        </on-error-propagate>
+      </error-handler>
+    </try>
+  </flow>
+
+  <flow name="post:\orders\(orderId)\cancel:sc-exp-portal-api-config">
+    <http:request method="POST" config-ref="prc-httpreq" path="${prc.basePath}/fulfillment/orders/{id}/cancel">
+      <http:uri-params><![CDATA[#[{ id: attributes.uriParams.orderId }]]]></http:uri-params>
+      <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+prcHeaders(vars.correlationId)
+]]></http:headers>
+    </http:request>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::portal
+output application/json
+---
+toPortalOrder(payload)
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+
+  <flow name="get:\inventory\(sku):sc-exp-portal-api-config">
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ lines: [{ sku: attributes.uriParams.sku, quantity: 1 }] }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <http:request method="POST" config-ref="prc-httpreq" path="${prc.basePath}/inventory/availability">
+      <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+prcHeaders(vars.correlationId)
+]]></http:headers>
+    </http:request>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+import * from modules::portal
+output application/json
+---
+payload.lines map ((l) -> {
+  sku: l.sku,
+  available: l.available,
+  warehouseId: l.warehouseId,
+  stockHealth: stockHealth(l.available default 0, 25)
+})
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+
+  <flow name="get:\shipments\(shipmentId):sc-exp-portal-api-config">
+    <http:request method="GET" config-ref="prc-httpreq" path="${prc.basePath}/shipments/{shipmentId}">
+      <http:uri-params><![CDATA[#[{ shipmentId: attributes.uriParams.shipmentId }]]]></http:uri-params>
+      <http:headers><![CDATA[%dw 2.0
+import * from modules::headers
+output application/java
+---
+prcHeaders(vars.correlationId)
+]]></http:headers>
+    </http:request>
+  </flow>
+
+  <flow name="post:\asns:sc-exp-portal-api-config">
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="asn"><![CDATA[%dw 2.0
+output application/java
+---
+payload ++ { asnId: "ASN-" ++ (randomInt(9000) + 1000) as String, receivedAt: now(), status: "ACCEPTED" }
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <os:store key="#[vars.asn.asnId]" objectStore="asn-store">
+      <os:value>#[vars.asn]</os:value>
+    </os:store>
+    <async>
+      <logger level="INFO" message="#['ASN accepted asynchronously ' ++ vars.asn.asnId]"/>
+    </async>
+    <set-variable variableName="httpStatus" value="#[202]"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ accepted: true, asnId: vars.asn.asnId }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+</mule>

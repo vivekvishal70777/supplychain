@@ -1,0 +1,122 @@
+#%RAML 1.0
+title: GlobalMart SC System API — WMS
+version: v1
+baseUri: https://wms.sys.globalmart.internal/{version}
+mediaType: application/json
+protocols: [HTTPS]
+description: System API for warehouse inventory, reservations, and warehouse master data.
+
+uses:
+  err: libraries/errors.raml
+
+traits:
+  correlation:
+    headers:
+      X-Correlation-Id?: string
+
+types:
+  InventoryPosition:
+    properties:
+      sku: string
+      warehouseId: string
+      onHand: integer
+      allocated: integer
+      available: integer
+      safetyStock: integer
+      lastCountAt: datetime
+  AllocationRequest:
+    properties:
+      orderId: string
+      warehouseId?: string
+      lines:
+        type: array
+        items:
+          properties:
+            sku: string
+            quantity: integer
+  AllocationResult:
+    properties:
+      allocationId: string
+      orderId: string
+      status:
+        enum: [ALLOCATED, PARTIAL, BACKORDER]
+      warehouseId: string
+      lines: object[]
+  Warehouse:
+    properties:
+      warehouseId: string
+      name: string
+      region: string
+      active: boolean
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "UP", "app": "sc-sys-wms-api" }
+
+/ready:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "READY" }
+
+/warehouses:
+  get:
+    is: [correlation]
+    responses:
+      200:
+        body:
+          application/json:
+            type: Warehouse[]
+
+/inventory/{sku}:
+  uriParameters:
+    sku: string
+  get:
+    is: [correlation]
+    queryParameters:
+      warehouseId?: string
+    responses:
+      200:
+        body:
+          application/json:
+            type: InventoryPosition[]
+      404:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/inventory/allocate:
+  post:
+    is: [correlation]
+    body:
+      application/json:
+        type: AllocationRequest
+    responses:
+      200:
+        body:
+          application/json:
+            type: AllocationResult
+      409:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/inventory/release:
+  post:
+    is: [correlation]
+    body:
+      application/json:
+        properties:
+          allocationId: string
+          reason?: string
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "RELEASED" }

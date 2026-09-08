@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.globalmart.integration</groupId>
+  <artifactId>supply-chain-platform</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>GlobalMart Supply Chain Integration Platform</name>
+  <description>Production-grade MuleSoft 4 API-led platform for order-to-fulfillment, inventory, and logistics.</description>
+
+  <modules>
+    <module>sc-sys-erp-api</module>
+    <module>sc-sys-wms-api</module>
+    <module>sc-sys-tms-api</module>
+    <module>sc-prc-fulfillment-api</module>
+    <module>sc-exp-portal-api</module>
+  </modules>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <app.runtime>4.6.9</app.runtime>
+    <mule.maven.plugin.version>4.3.0</mule.maven.plugin.version>
+    <munit.version>3.3.0</munit.version>
+    <http.connector.version>1.10.3</http.connector.version>
+    <sockets.connector.version>1.2.5</sockets.connector.version>
+    <apikit.version>1.11.3</apikit.version>
+    <os.connector.version>1.2.2</os.connector.version>
+    <vm.connector.version>2.0.1</vm.connector.version>
+    <validation.module.version>2.0.6</validation.module.version>
+    <secure.props.version>1.2.7</secure.props.version>
+    <json.module.version>2.5.4</json.module.version>
+    <java.version>17</java.version>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.mule.connectors</groupId>
+        <artifactId>mule-http-connector</artifactId>
+        <version>${http.connector.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>org.mule.connectors</groupId>
+        <artifactId>mule-sockets-connector</artifactId>
+        <version>${sockets.connector.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>org.mule.modules</groupId>
+        <artifactId>mule-apikit-module</artifactId>
+        <version>${apikit.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>org.mule.connectors</groupId>
+        <artifactId>mule-objectstore-connector</artifactId>
+        <version>${os.connector.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>org.mule.connectors</groupId>
+        <artifactId>mule-vm-connector</artifactId>
+        <version>${vm.connector.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>org.mule.modules</groupId>
+        <artifactId>mule-validation-module</artifactId>
+        <version>${validation.module.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>com.mulesoft.modules</groupId>
+        <artifactId>mule-secure-configuration-property-module</artifactId>
+        <version>${secure.props.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>org.mule.modules</groupId>
+        <artifactId>mule-json-module</artifactId>
+        <version>${json.module.version}</version>
+        <classifier>mule-plugin</classifier>
+      </dependency>
+      <dependency>
+        <groupId>com.mulesoft.munit</groupId>
+        <artifactId>munit-runner</artifactId>
+        <version>${munit.version}</version>
+        <classifier>mule-plugin</classifier>
+        <scope>test</scope>
+      </dependency>
+      <dependency>
+        <groupId>com.mulesoft.munit</groupId>
+        <artifactId>munit-tools</artifactId>
+        <version>${munit.version}</version>
+        <classifier>mule-plugin</classifier>
+        <scope>test</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.mule.tools.maven</groupId>
+          <artifactId>mule-maven-plugin</artifactId>
+          <version>${mule.maven.plugin.version}</version>
+          <extensions>true</extensions>
+          <configuration>
+            <classifier>mule-application</classifier>
+            <cloudhub2Deployment>
+              <uri>https://anypoint.mulesoft.com</uri>
+              <provider>MC</provider>
+              <environment>${anypoint.environment}</environment>
+              <target>${cloudhub2.target}</target>
+              <applicationName>${project.artifactId}</applicationName>
+              <replicas>2</replicas>
+              <vCores>0.2</vCores>
+              <deploymentSettings>
+                <enforceDeployingReplicasAcrossNodes>true</enforceDeployingReplicasAcrossNodes>
+                <updateStrategy>rolling</updateStrategy>
+                <forwardSslSession>false</forwardSslSession>
+              </deploymentSettings>
+            </cloudhub2Deployment>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+
+  <repositories>
+    <repository>
+      <id>anypoint-exchange-v3</id>
+      <name>Anypoint Exchange</name>
+      <url>https://maven.anypoint.mulesoft.com/api/v3/maven</url>
+      <layout>default</layout>
+    </repository>
+    <repository>
+      <id>mulesoft-releases</id>
+      <name>MuleSoft Releases</name>
+      <url>https://repository.mulesoft.org/releases/</url>
+    </repository>
+  </repositories>
+
+  <pluginRepositories>
+    <pluginRepository>
+      <id>mulesoft-releases</id>
+      <name>MuleSoft Releases</name>
+      <url>https://repository.mulesoft.org/releases/</url>
+    </pluginRepository>
+  </pluginRepositories>
+</project>

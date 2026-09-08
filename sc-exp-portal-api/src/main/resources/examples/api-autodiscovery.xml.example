@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Enable in CloudHub / Runtime Fabric after publishing the API in API Manager.
+  Copy into src/main/mule/ and set api.id in encrypted properties.
+
+  xmlns:api-gateway="http://www.mulesoft.org/schema/mule/api-gateway"
+  schema: http://www.mulesoft.org/schema/mule/api-gateway/current/mule-api-gateway.xsd
+
+  Maven:
+    <dependency>
+      <groupId>org.mule.modules</groupId>
+      <artifactId>mule-module-apikit</artifactId>
+    </dependency>
+    Autodiscovery is part of the API Gateway module bundled with Mule EE.
+-->
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:api-gateway="http://www.mulesoft.org/schema/mule/api-gateway"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/api-gateway http://www.mulesoft.org/schema/mule/api-gateway/current/mule-api-gateway.xsd">
+  <api-gateway:autodiscovery apiId="${api.id}"
+                             ignoreBasePath="true"
+                             flowRef="sc-exp-portal-api-main"/>
+</mule>

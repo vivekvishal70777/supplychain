@@ -1,0 +1,26 @@
+[
+  {
+    "customerId": "CUST-1001",
+    "name": "Northwind Retail Co",
+    "status": "ACTIVE",
+    "creditLimit": { "amount": 250000, "currency": "USD" },
+    "openPayables": { "amount": 18450.25, "currency": "USD" },
+    "shipTo": { "line1": "500 Market St", "city": "Chicago", "state": "IL", "postalCode": "60601", "country": "US" }
+  },
+  {
+    "customerId": "CUST-1002",
+    "name": "Pacific Grocery Alliance",
+    "status": "ACTIVE",
+    "creditLimit": { "amount": 75000, "currency": "USD" },
+    "openPayables": { "amount": 72000, "currency": "USD" },
+    "shipTo": { "line1": "12 Harbor Way", "city": "Seattle", "state": "WA", "postalCode": "98101", "country": "US" }
+  },
+  {
+    "customerId": "CUST-2099",
+    "name": "Blocked Imports LLC",
+    "status": "BLOCKED",
+    "creditLimit": { "amount": 0, "currency": "USD" },
+    "openPayables": { "amount": 4100, "currency": "USD" },
+    "shipTo": { "line1": "9 Freight Rd", "city": "Houston", "state": "TX", "postalCode": "77002", "country": "US" }
+  }
+]

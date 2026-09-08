@@ -1,0 +1,189 @@
+#%RAML 1.0
+title: GlobalMart SC Experience API — Partner Portal
+version: v1
+baseUri: https://api.globalmart.com/supply-chain/{version}
+mediaType: application/json
+protocols: [HTTPS]
+description: |
+  Channel-specific API for the supplier/ops portal. Aggregates and reshapes
+  Process API payloads into UI-friendly resources. Policies (rate limit,
+  client-id, JWT) are applied in API Manager — not in this RAML runtime.
+
+uses:
+  err: libraries/errors.raml
+
+traits:
+  correlation:
+    headers:
+      X-Correlation-Id?: string
+  paging:
+    queryParameters:
+      page:
+        type: integer
+        default: 0
+        minimum: 0
+      size:
+        type: integer
+        default: 25
+        minimum: 1
+        maximum: 100
+
+types:
+  PortalOrderCreate:
+    properties:
+      customerId: string
+      requestedShipDate: date
+      serviceLevel?:
+        enum: [STANDARD, EXPEDITED, OVERNIGHT]
+      lines:
+        type: array
+        minItems: 1
+        items:
+          properties:
+            sku: string
+            quantity: integer
+      shipTo:
+        properties:
+          line1: string
+          city: string
+          postalCode: string
+          country: string
+  PortalOrder:
+    properties:
+      orderId: string
+      status: string
+      statusLabel: string
+      customerId: string
+      tracking?: string
+      summary: string
+      createdAt: datetime
+  InventoryView:
+    properties:
+      sku: string
+      available: integer
+      warehouseId: string
+      stockHealth:
+        enum: [HEALTHY, LOW, STOCKOUT]
+  AsnCreate:
+    properties:
+      supplierId: string
+      expectedArrival: date
+      lines:
+        type: array
+        items:
+          properties:
+            sku: string
+            quantity: integer
+
+/health:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "UP", "app": "sc-exp-portal-api" }
+
+/ready:
+  get:
+    responses:
+      200:
+        body:
+          application/json:
+            example: { "status": "READY" }
+
+/orders:
+  get:
+    is: [correlation, paging]
+    queryParameters:
+      status?: string
+      customerId?: string
+    responses:
+      200:
+        body:
+          application/json:
+            properties:
+              page: integer
+              size: integer
+              items: PortalOrder[]
+  post:
+    is: [correlation]
+    headers:
+      X-Idempotency-Key:
+        type: string
+        required: true
+    body:
+      application/json:
+        type: PortalOrderCreate
+    responses:
+      201:
+        body:
+          application/json:
+            type: PortalOrder
+      422:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/orders/{orderId}:
+  uriParameters:
+    orderId: string
+  get:
+    is: [correlation]
+    responses:
+      200:
+        body:
+          application/json:
+            type: PortalOrder
+      404:
+        body:
+          application/json:
+            type: err.ErrorResponse
+
+/orders/{orderId}/cancel:
+  post:
+    is: [correlation]
+    body:
+      application/json:
+        properties:
+          reason: string
+    responses:
+      200:
+        body:
+          application/json:
+            type: PortalOrder
+
+/inventory/{sku}:
+  uriParameters:
+    sku: string
+  get:
+    is: [correlation]
+    responses:
+      200:
+        body:
+          application/json:
+            type: InventoryView[]
+
+/shipments/{shipmentId}:
+  uriParameters:
+    shipmentId: string
+  get:
+    is: [correlation]
+    responses:
+      200:
+        body:
+          application/json:
+            type: object
+
+/asns:
+  post:
+    is: [correlation]
+    description: Advanced Shipping Notice from a supplier. Accepted asynchronously.
+    body:
+      application/json:
+        type: AsnCreate
+    responses:
+      202:
+        body:
+          application/json:
+            example:
+              { "accepted": true, "asnId": "ASN-1001" }

@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+  <sub-flow name="impl-ensure-seed">
+    <os:contains key="seeded" objectStore="wms-store"/>
+    <choice>
+      <when expression="#[payload == false]">
+        <ee:transform>
+          <ee:variables>
+            <ee:set-variable variableName="warehouses"><![CDATA[%dw 2.0
+output application/java
+---
+readUrl("classpath://data/warehouses.json", "application/json")
+]]></ee:set-variable>
+            <ee:set-variable variableName="inventory"><![CDATA[%dw 2.0
+output application/java
+---
+readUrl("classpath://data/inventory.json", "application/json")
+]]></ee:set-variable>
+            <ee:set-variable variableName="allocations"><![CDATA[%dw 2.0
+output application/java
+---
+{}
+]]></ee:set-variable>
+          </ee:variables>
+        </ee:transform>
+        <os:store key="warehouses" objectStore="wms-store"><os:value>#[vars.warehouses]</os:value></os:store>
+        <os:store key="inventory" objectStore="wms-store"><os:value>#[vars.inventory]</os:value></os:store>
+        <os:store key="allocations" objectStore="wms-store"><os:value>#[vars.allocations]</os:value></os:store>
+        <os:store key="seeded" objectStore="wms-store"><os:value>#[true]</os:value></os:store>
+      </when>
+    </choice>
+  </sub-flow>
+
+  <flow name="get:\warehouses:sc-sys-wms-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="warehouses" objectStore="wms-store"/>
+  </flow>
+
+  <flow name="get:\inventory\(sku):sc-sys-wms-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <os:retrieve key="inventory" objectStore="wms-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var sku = attributes.uriParams.sku
+var wh = attributes.queryParams.warehouseId
+var rows = payload filter ((r) -> r.sku == sku and (wh == null or r.warehouseId == wh))
+---
+rows
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <choice>
+      <when expression="#[isEmpty(payload)]">
+        <raise-error type="APP:NOT_FOUND" description="#['No inventory for SKU ' ++ attributes.uriParams.sku]"/>
+      </when>
+    </choice>
+  </flow>
+
+  <flow name="post:\inventory\allocate:sc-sys-wms-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <set-variable variableName="request" value="#[payload]"/>
+    <os:retrieve key="inventory" objectStore="wms-store" target="inventory"/>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="preferredWh"><![CDATA[%dw 2.0
+output application/java
+---
+vars.request.warehouseId default "WH-CHI"
+]]></ee:set-variable>
+        <ee:set-variable variableName="lineResults"><![CDATA[%dw 2.0
+output application/java
+---
+vars.request.lines map ((line) -> do {
+  var pos = vars.inventory filter ((r) -> r.sku == line.sku and r.warehouseId == (vars.request.warehouseId default "WH-CHI"))
+  var available = if (isEmpty(pos)) 0 else pos[0].available
+  var qty = line.quantity as Number
+  ---
+  {
+    sku: line.sku,
+    requested: qty,
+    allocated: min([qty, available]),
+    shortfall: max([0, qty - available])
+  }
+})
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <choice>
+      <when expression="#[sizeOf(vars.lineResults filter ((l) -> l.allocated == 0 and l.requested > 0)) == sizeOf(vars.lineResults)]">
+        <raise-error type="APP:BACKORDER" description="No inventory available to allocate"/>
+      </when>
+    </choice>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="allocation"><![CDATA[%dw 2.0
+output application/java
+var shorts = vars.lineResults filter ((l) -> l.shortfall > 0)
+---
+{
+  allocationId: "ALC-" ++ uuid(),
+  orderId: vars.request.orderId,
+  status: if (isEmpty(shorts)) "ALLOCATED" else "PARTIAL",
+  warehouseId: vars.preferredWh,
+  lines: vars.lineResults
+}
+]]></ee:set-variable>
+        <ee:set-variable variableName="updatedInventory"><![CDATA[%dw 2.0
+output application/java
+---
+vars.inventory map ((row) -> do {
+  var hit = vars.lineResults filter ((l) -> l.sku == row.sku and row.warehouseId == vars.preferredWh)
+  ---
+  if (isEmpty(hit)) row
+  else row ++ {
+    allocated: row.allocated + hit[0].allocated,
+    available: row.available - hit[0].allocated
+  }
+})
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <os:store key="inventory" objectStore="wms-store"><os:value>#[vars.updatedInventory]</os:value></os:store>
+    <os:retrieve key="allocations" objectStore="wms-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload ++ { (vars.allocation.allocationId): vars.allocation }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <os:store key="allocations" objectStore="wms-store"/>
+    <set-payload value="#[vars.allocation]"/>
+  </flow>
+
+  <flow name="post:\inventory\release:sc-sys-wms-api-config">
+    <flow-ref name="impl-ensure-seed"/>
+    <set-variable variableName="allocationId" value="#[payload.allocationId]"/>
+    <os:retrieve key="allocations" objectStore="wms-store" target="allocations"/>
+    <ee:transform>
+      <ee:variables>
+        <ee:set-variable variableName="alloc"><![CDATA[%dw 2.0
+output application/java
+---
+vars.allocations[vars.allocationId] default null
+]]></ee:set-variable>
+      </ee:variables>
+    </ee:transform>
+    <choice>
+      <when expression="#[vars.alloc == null]">
+        <raise-error type="APP:NOT_FOUND" description="Allocation not found"/>
+      </when>
+    </choice>
+    <os:retrieve key="inventory" objectStore="wms-store" target="inventory"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+vars.inventory map ((row) -> do {
+  var hit = vars.alloc.lines filter ((l) -> l.sku == row.sku and row.warehouseId == vars.alloc.warehouseId)
+  ---
+  if (isEmpty(hit)) row
+  else row ++ {
+    allocated: row.allocated - hit[0].allocated,
+    available: row.available + hit[0].allocated
+  }
+})
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <os:store key="inventory" objectStore="wms-store"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{ status: "RELEASED", allocationId: vars.allocationId }
+]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </flow>
+</mule>

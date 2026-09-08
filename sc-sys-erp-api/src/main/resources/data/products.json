@@ -1,0 +1,26 @@
+[
+  {
+    "sku": "SKU-WIDGET-A",
+    "description": "Industrial widget A — stainless",
+    "uom": "EA",
+    "unitPrice": { "amount": 24.5, "currency": "USD" },
+    "leadTimeDays": 5,
+    "hazardous": false
+  },
+  {
+    "sku": "SKU-WIDGET-B",
+    "description": "Industrial widget B — polymer",
+    "uom": "EA",
+    "unitPrice": { "amount": 11.2, "currency": "USD" },
+    "leadTimeDays": 3,
+    "hazardous": false
+  },
+  {
+    "sku": "SKU-BATTERY-X",
+    "description": "Li-ion pack 24V",
+    "uom": "EA",
+    "unitPrice": { "amount": 89.0, "currency": "USD" },
+    "leadTimeDays": 12,
+    "hazardous": true
+  }
+]
