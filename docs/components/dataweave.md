@@ -22,6 +22,22 @@ output application/json
 
 The lambda can also use `(item, index) -> …` when you need the position.
 
+## `filter` — keep some items, return an array
+
+`filter` tests each element with a predicate. Items that pass are **kept**; the rest are dropped. The result is a **new array**, often shorter than the input.
+
+![DataWeave filter: keep some items and return an array](../assets/dataweave-filter.gif)
+
+```dataweave
+%dw 2.0
+output application/json
+---
+[1, 2, 3, 4] filter ((n) -> isEven(n))
+// [2, 4]
+```
+
+Unlike `map`, length is not preserved — only matching items appear in the output.
+
 ## Modules in this repo
 
 | Module | Apps | Purpose |
